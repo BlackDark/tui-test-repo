@@ -1,0 +1,186 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [created]
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            binary_name: red-linux-x64
+          - os: ubuntu-latest
+            target: linux-arm64
+            binary_name: red-linux-arm64
+          - os: macos-latest
+            target: darwin-x64
+            binary_name: red-darwin-x64
+          - os: macos-14 # Apple Silicon
+            target: darwin-arm64
+            binary_name: red-darwin-arm64
+          # - os: windows-latest
+          #   target: win32-x64
+          #   binary_name: red-win32-x64.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup repository
+        run: |
+          chmod +x ./scripts/init.sh
+          ./scripts/init.sh
+        shell: bash
+
+      - name: Override ./src/version.json
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo '{ "version": "${{ github.event.release.tag_name }}" }' > ./src/version.json
+          else
+            echo '{ "version": "dev-${{ github.sha }}" }' > ./src/version.json
+          fi
+
+      - name: Build binary
+        run: bun run build
+
+      - name: Rename binary
+        run: |
+          mkdir -p release-artifacts
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp ./dist/bin/red.exe ./release-artifacts/${{ matrix.binary_name }}
+          else
+            cp ./dist/bin/red ./release-artifacts/${{ matrix.binary_name }}
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary_name }}
+          path: ./release-artifacts/${{ matrix.binary_name }}
+          retention-days: 1
+
+  build-config-schema:
+    name: Build Config Schema
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup repository
+        run: |
+          ./scripts/init.sh
+        shell: bash
+
+      - name: Generate Config Schema
+        run: ./scripts/generate-config-json-schema.ts
+
+      - name: Debug - Check if schema was generated
+        run: ls -la ./generated/
+
+      - name: Upload Config Schema artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: redrc.schema.json
+          path: ./generated/redrc.schema.json
+          if-no-files-found: error
+
+  upload-to-release:
+    name: Upload Assets to Release
+    needs: [build, build-config-schema]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -la ./release-artifacts/
+
+      - name: Upload config schema
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release-artifacts/redrc.schema.json/redrc.schema.json
+          asset_name: redrc.schema.json
+          asset_content_type: application/json
+
+      - name: Upload Linux x64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release-artifacts/red-linux-x64/red-linux-x64
+          asset_name: red-linux-x64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release-artifacts/red-linux-arm64/red-linux-arm64
+          asset_name: red-linux-arm64
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS x64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release-artifacts/red-darwin-x64/red-darwin-x64
+          asset_name: red-darwin-x64
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS ARM64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./release-artifacts/red-darwin-arm64/red-darwin-arm64
+          asset_name: red-darwin-arm64
+          asset_content_type: application/octet-stream
+
+      # - name: Upload Windows x64 binary
+      #   uses: actions/upload-release-asset@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   with:
+      #     upload_url: ${{ github.event.release.upload_url }}
+      #     asset_path: ./release-artifacts/red-win32-x64.exe/red-win32-x64.exe
+      #     asset_name: red-win32-x64.exe
+      #     asset_content_type: application/octet-stream
