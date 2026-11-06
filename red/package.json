@@ -16,7 +16,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opentui/core": "^0.1.26",
+    "@opentui/core": "^0.8.0",
     "@opentui/react": "^0.1.26",
     "@tanstack/react-query": "^5.90.2",
     "clipboardy": "^5.0.0",
